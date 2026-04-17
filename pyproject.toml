@@ -1,0 +1,52 @@
+[project]
+name = "wboz"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Viachaslau Kulchynski",email = "viachaslau.kulchynski@ulta.team"}
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "aiogram (>=3.27.0,<4.0.0)",
+    "aiohttp (>=3.13.5,<4.0.0)",
+    "beautifulsoup4 (>=4.14.3,<5.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "asyncpg (>=0.31.0,<0.32.0)",
+    "sqlalchemy (>=2.0.49,<3.0.0)",
+    "fastapi (>=0.136.0,<0.137.0)",
+    "uvicorn (>=0.44.0,<0.45.0)",
+    "click (>=8.3.2,<9.0.0)",
+    "pydantic-settings (>=2.13.1,<3.0.0)"
+]
+
+[project.scripts]
+wboz = "app.__main__:cli"
+
+[tool.poetry]
+package-mode = false
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "alembic (>=1.18.4,<2.0.0)",
+    "psycopg[binary] (>=3.3.3,<4.0.0)",
+    "black (>=26.3.1,<27.0.0)",
+    "isort (>=8.0.1,<9.0.0)",
+    "ruff (>=0.15.11,<0.16.0)"
+]
+
+[tool.isort]
+profile = "black"
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wboz-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wboz
+      POSTGRES_USER: wboz
+      POSTGRES_PASSWORD: wboz
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wboz -d wboz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
