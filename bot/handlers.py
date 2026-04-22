@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import html
 import re
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     CallbackQuery,
@@ -26,10 +30,13 @@ WB_BUTTON = "WB"
 OZON_BUTTON = "Ozon"
 ADD_LINK_BUTTON = "🔗 Добавить ссылку"
 BACK_BUTTON = "⬅️ Назад"
+MY_TRACKS_BUTTON = "📦 Мои товары"
 WB_CALLBACK = "select_platform:wb"
 OZON_CALLBACK = "select_platform:ozon"
 ADD_LINK_CALLBACK = "platform_action:add_link"
 BACK_CALLBACK = "platform_action:back"
+MY_TRACKS_CALLBACK = "platform_action:my_tracks"
+DELETE_TRACK_CALLBACK_PREFIX = "track_delete:"
 
 _selected_platform: dict[int, str] = {}
 _awaiting_link: set[int] = set()
@@ -74,6 +81,58 @@ def _currency_code_by_url(url: str) -> str:
     return "RUB"
 
 
+def _format_price(value: Decimal | int | float) -> str:
+    return f"{Decimal(str(value)):.2f}"
+
+
+def _format_track_line(idx: int, item: dict) -> str:
+    currency = _currency_code_by_url(item["url"])
+    title = html.escape(item["title"] or item["item_id"])
+    url = html.escape(item["url"], quote=True)
+    return (
+        f"<b>{idx}. {item['platform'].upper()}</b>\n"
+        f"Название: {title}\n"
+        f'Ссылка: <a href="{url}">Открыть товар</a>\n'
+        f"Текущая цена: ≈ {_format_price(item['last_price'])} {currency}\n"
+        f"Мин. процент снижения: {item['threshold']}%\n"
+        "⚠️ <b>Цена может незначительно отличаться от витрины маркетплейса.</b>"
+    )
+
+
+def _build_track_action_keyboard(track_id: int, idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🗑 Удалить #{idx}",
+                    callback_data=f"{DELETE_TRACK_CALLBACK_PREFIX}{track_id}",
+                )
+            ]
+        ]
+    )
+
+
+def _extract_track_id_from_callback(data: str | None) -> int | None:
+    if not data or not data.startswith(DELETE_TRACK_CALLBACK_PREFIX):
+        return None
+    raw_track_id = data.removeprefix(DELETE_TRACK_CALLBACK_PREFIX)
+    if not raw_track_id.isdigit():
+        return None
+    return int(raw_track_id)
+
+
+def _resolve_tracks_request_user(
+    *,
+    message_user_id: int,
+    message_username: str | None,
+    callback_user_id: int | None = None,
+    callback_username: str | None = None,
+) -> tuple[int, str | None]:
+    if callback_user_id is not None:
+        return callback_user_id, callback_username
+    return message_user_id, message_username
+
+
 async def _fetch_product_snapshot(platform: str, item_id: str, url: str):
     async with ClientSession() as session:
         if platform == "wb":
@@ -91,6 +150,7 @@ def _main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=WB_BUTTON), KeyboardButton(text=OZON_BUTTON)],
+            [KeyboardButton(text=MY_TRACKS_BUTTON)],
         ],
         resize_keyboard=True,
     )
@@ -102,7 +162,8 @@ def _main_inline_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=WB_BUTTON, callback_data=WB_CALLBACK),
                 InlineKeyboardButton(text=OZON_BUTTON, callback_data=OZON_CALLBACK),
-            ]
+            ],
+            [InlineKeyboardButton(text=MY_TRACKS_BUTTON, callback_data=MY_TRACKS_CALLBACK)],
         ]
     )
 
@@ -111,6 +172,7 @@ def _platform_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=ADD_LINK_BUTTON, callback_data=ADD_LINK_CALLBACK)],
+            [InlineKeyboardButton(text=MY_TRACKS_BUTTON, callback_data=MY_TRACKS_CALLBACK)],
             [InlineKeyboardButton(text=BACK_BUTTON, callback_data=BACK_CALLBACK)],
         ]
     )
@@ -120,6 +182,7 @@ def _platform_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=ADD_LINK_BUTTON)],
+            [KeyboardButton(text=MY_TRACKS_BUTTON)],
             [KeyboardButton(text=BACK_BUTTON)],
         ],
         resize_keyboard=True,
@@ -179,10 +242,57 @@ async def _create_tracking(
     await message.answer(
         f"Отслеживание добавлено #{track_id}.\n"
         f"Товар: {snapshot.name}\n"
-        f"Текущая цена: {snapshot.price} {_currency_code_by_url(normalized_url)}\n"
-        f"Порог: {threshold}%"
+        f"Текущая цена: ≈ {_format_price(snapshot.price)} {_currency_code_by_url(normalized_url)}\n"
+        f"Порог: {threshold}%\n"
+        "⚠️ <b>Цена может незначительно отличаться от цены на витрине.</b>",
+        parse_mode="HTML",
     )
     return True
+
+
+def _build_tracks_message(tracks: list[dict]) -> str:
+    if not tracks:
+        return "У вас пока нет товаров."
+    return "Ваши товары:"
+
+
+async def _send_user_tracks(message: Message, db: Database, settings: Settings) -> None:
+    message_user_id, message_username = _get_user(message)
+    user_id, username = _resolve_tracks_request_user(
+        message_user_id=message_user_id,
+        message_username=message_username,
+    )
+    await _send_user_tracks_for_user(message, db, settings, user_id, username)
+
+
+async def _send_user_tracks_for_user(
+    message: Message,
+    db: Database,
+    settings: Settings,
+    user_id: int,
+    username: str | None,
+) -> None:
+    await db.ensure_user(
+        user_id,
+        username,
+        settings.default_check_interval,
+    )
+    tracks = await db.list_user_tracks(user_id)
+    if not tracks:
+        await message.answer(
+            _build_tracks_message(tracks),
+            reply_markup=_main_inline_keyboard(),
+        )
+        return
+
+    await message.answer(_build_tracks_message(tracks))
+    for idx, item in enumerate(tracks, start=1):
+        await message.answer(
+            _format_track_line(idx, item),
+            reply_markup=_build_track_action_keyboard(int(item["id"]), idx),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 @router.message(Command("start"))
@@ -247,26 +357,7 @@ async def cmd_track(message: Message, command: CommandObject, db: Database, sett
 
 @router.message(Command("mytrack"))
 async def cmd_mytrack(message: Message, db: Database, settings: Settings) -> None:
-    user_id, username = _get_user(message)
-    await db.ensure_user(
-        user_id,
-        username,
-        settings.default_check_interval,
-    )
-    tracks = await db.list_user_tracks(user_id)
-    if not tracks:
-        await message.answer("У вас пока нет отслеживаемых товаров.")
-        return
-
-    lines = ["Ваши отслеживания:"]
-    for idx, item in enumerate(tracks, start=1):
-        lines.append(
-            f"{idx}. [{item['platform'].upper()}] {item['title'] or item['item_id']}\n"
-            f"   Цена: {item['last_price']}₽ | Порог: {item['threshold']}%\n"
-            f"   Добавлено: {item['created_at']}\n"
-            f"   /untrack {idx} | /setthreshold {idx} <новый%>"
-        )
-    await message.answer("\n\n".join(lines))
+    await _send_user_tracks(message, db, settings)
 
 
 @router.message(Command("untrack"))
@@ -330,8 +421,8 @@ async def cmd_settings(message: Message, command: CommandObject, db: Database, s
     arg = (command.args or "").strip()
     if arg:
         interval = _safe_int(arg)
-        if interval is None or interval < 10:
-            await message.answer("Интервал проверки должен быть целым числом, минимум 10 минут.")
+        if interval is None or interval < 3:
+            await message.answer("Интервал проверки должен быть целым числом, минимум 3 минуты.")
             return
         await db.update_user_interval(user_id, interval)
 
@@ -350,7 +441,7 @@ async def cmd_settings(message: Message, command: CommandObject, db: Database, s
 async def cmd_subscribe(message: Message) -> None:
     await message.answer(
         "Подписка пока не подключена.\n"
-        "Бесплатный лимит: 5 товаров, интервал от 10 минут.\n"
+        "Бесплатный лимит: 5 товаров, интервал от 3 минут.\n"
         "При необходимости можно расширить до Freemium-тарифов."
     )
 
@@ -404,11 +495,12 @@ async def add_link_button(message: Message) -> None:
         return
     _awaiting_link.add(user_id)
     readable = "Wildberries" if platform == "wb" else "Ozon"
-    await message.answer(
-        f"Пришлите ссылку на товар {readable}.\n"
-        "Можно сразу с порогом через пробел, например:\n"
-        "`https://www.wildberries.ru/catalog/12345678/detail.aspx 15`"
-    )
+    await message.answer(f"Пришлите ссылку на товар {readable}.\n")
+
+
+@router.message(F.text == MY_TRACKS_BUTTON)
+async def my_tracks_button(message: Message, db: Database, settings: Settings) -> None:
+    await _send_user_tracks(message, db, settings)
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -462,12 +554,53 @@ async def add_link_callback(callback: CallbackQuery) -> None:
         return
     _awaiting_link.add(callback.from_user.id)
     readable = "Wildberries" if platform == "wb" else "Ozon"
-    await message.answer(
-        f"Пришлите ссылку на товар {readable}.\n"
-        "Можно сразу с порогом через пробел, например:\n"
-        "`https://www.wildberries.ru/catalog/12345678/detail.aspx 15`"
+    await message.answer(f"Пришлите ссылку на товар {readable}.\n")
+    await callback.answer()
+
+
+@router.callback_query(F.data == MY_TRACKS_CALLBACK)
+async def my_tracks_callback(callback: CallbackQuery, db: Database, settings: Settings) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+    message_user_id, message_username = _get_user(message)
+    user_id, username = _resolve_tracks_request_user(
+        message_user_id=message_user_id,
+        message_username=message_username,
+        callback_user_id=callback.from_user.id,
+        callback_username=callback.from_user.username,
+    )
+    await _send_user_tracks_for_user(
+        message,
+        db,
+        settings,
+        user_id,
+        username,
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith(DELETE_TRACK_CALLBACK_PREFIX))
+async def delete_track_callback(callback: CallbackQuery, db: Database) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+
+    track_id = _extract_track_id_from_callback(callback.data)
+    if track_id is None:
+        await callback.answer("Некорректный запрос удаления.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    removed = await db.remove_tracking(user_id=user_id, track_id=track_id)
+    if not removed:
+        await callback.answer("Товар уже удален или не найден.", show_alert=False)
+    else:
+        await callback.answer("Товар удален.", show_alert=False)
+        with contextlib.suppress(TelegramBadRequest):
+            await message.delete()
 
 
 @router.callback_query(F.data == BACK_CALLBACK)

@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -20,13 +21,14 @@ WB_V4_DEFAULT_PARAMS = {
     "lang": "ru",
 }
 WB_BY_HOSTS = {"wildberries.by", "www.wildberries.by"}
+WB_BY_DESTINATION = "12358562"
 
 
 @dataclass(slots=True, frozen=True)
 class ProductSnapshot:
     item_id: str
     name: str
-    price: int
+    price: Decimal
 
 
 def _extract_ozon_price(node: Any) -> int | None:
@@ -53,14 +55,25 @@ def _extract_ozon_price(node: Any) -> int | None:
     return None
 
 
-def _extract_price_from_html(soup: BeautifulSoup) -> int | None:
+def _to_decimal_price(raw_price: int | float | Decimal) -> Decimal:
+    return (Decimal(str(raw_price)) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _extract_price_from_html(soup: BeautifulSoup) -> Decimal | None:
     meta_price = soup.find("meta", property="product:price:amount")
     if meta_price:
         meta_price_content = meta_price.get("content", "")
         if isinstance(meta_price_content, str):
-            digits = re.sub(r"[^\d]", "", meta_price_content)
+            normalized = meta_price_content.replace(" ", "").replace(",", ".")
+            if re.search(r"\.\d{1,2}$", normalized):
+                numeric = re.sub(r"[^\d.]", "", normalized)
+                try:
+                    return Decimal(numeric).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                except Exception:  # noqa: BLE001
+                    pass
+            digits = re.sub(r"[^\d]", "", normalized)
             if digits:
-                return int(digits)
+                return Decimal(digits).quantize(Decimal("0.01"))
 
     for script in soup.find_all("script", type="application/ld+json"):
         try:
@@ -69,7 +82,7 @@ def _extract_price_from_html(soup: BeautifulSoup) -> int | None:
             continue
         price = _extract_ozon_price(data)
         if price is not None:
-            return price
+            return Decimal(str(price)).quantize(Decimal("0.01"))
     return None
 
 
@@ -103,19 +116,20 @@ def _build_wb_v4_params(item_id: str, url: str | None) -> dict[str, str]:
     host = parsed.netloc.lower()
     if host in WB_BY_HOSTS:
         params["curr"] = "byn"
+        params["dest"] = WB_BY_DESTINATION
     return params
 
 
-def _extract_price_from_wb_product(product: dict[str, Any], size_option_id: int | None = None) -> int | None:
+def _extract_price_from_wb_product(product: dict[str, Any], size_option_id: int | None = None) -> Decimal | None:
     sale_price_u = product.get("salePriceU") or product.get("priceU")
     if isinstance(sale_price_u, (int, float)) and sale_price_u > 0:
-        return int(sale_price_u // 100)
+        return _to_decimal_price(sale_price_u)
 
     sizes = product.get("sizes")
     if not isinstance(sizes, list):
         return None
 
-    fallback_prices: list[int] = []
+    fallback_prices: list[Decimal] = []
     for size in sizes:
         if not isinstance(size, dict):
             continue
@@ -127,7 +141,7 @@ def _extract_price_from_wb_product(product: dict[str, Any], size_option_id: int 
         if not isinstance(raw_price, (int, float)) or raw_price <= 0:
             continue
 
-        parsed_price = int(raw_price // 100)
+        parsed_price = _to_decimal_price(raw_price)
         option_id = size.get("optionId")
         if size_option_id is not None and option_id == size_option_id:
             return parsed_price

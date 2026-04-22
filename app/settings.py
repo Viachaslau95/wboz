@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = Field(default="")
     DATABASE_URL: str = Field(default="postgresql://wboz:wboz@localhost:5432/wboz")
     DEFAULT_THRESHOLD: int = Field(default=10, ge=1, le=100)
-    DEFAULT_CHECK_INTERVAL: int = Field(default=30, ge=10)
+    DEFAULT_CHECK_INTERVAL: int = Field(default=30)
 
     DEBUG: bool = Field(default=False)
     APP_SERVICE_NAME: str = Field(default="wboz")

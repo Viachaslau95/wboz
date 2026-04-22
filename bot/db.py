@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 
 from app.db import Session, engine, transaction
 from app.db.models import TrackedItems, Users
@@ -70,7 +71,7 @@ class Database:
         item_id: str,
         url: str,
         title: str,
-        current_price: int,
+        current_price: Decimal,
         threshold: int,
     ) -> int:
         async with transaction() as session:
@@ -182,7 +183,7 @@ class Database:
             now = datetime.datetime.now(datetime.UTC)
             due_items: list[dict] = []
             for row in rows:
-                interval_minutes = max(int(row.check_interval), 10)
+                interval_minutes = max(int(row.check_interval), 3)
                 last_checked_at = row.last_checked_at
                 is_due = _is_item_due(last_checked_at, interval_minutes, now)
                 if is_due:
@@ -210,7 +211,7 @@ class Database:
             )
             await session.execute(query)
 
-    async def update_last_price(self, track_id: int, current_price: int, title: str | None = None) -> None:
+    async def update_last_price(self, track_id: int, current_price: Decimal, title: str | None = None) -> None:
         async with transaction() as session:
             values = {
                 "last_price": current_price,

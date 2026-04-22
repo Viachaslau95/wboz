@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from decimal import Decimal
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -11,21 +12,26 @@ from bot.marketplaces import ProductSnapshot, fetch_ozon_product, fetch_wb_produ
 LOGGER = logging.getLogger(__name__)
 
 
-def is_price_dropped(last_price: int, current_price: int, threshold: int) -> tuple[bool, float]:
+def _format_price(value: Decimal | int | float) -> str:
+    return f"{Decimal(str(value)):.2f}"
+
+
+def is_price_dropped(last_price: Decimal, current_price: Decimal, threshold: int) -> tuple[bool, float]:
     if last_price <= 0:
         return False, 0.0
     delta_percent = ((last_price - current_price) / last_price) * 100
-    return delta_percent >= threshold, delta_percent
+    return delta_percent >= threshold, float(delta_percent)
 
 
 def build_notification(
-    snapshot: ProductSnapshot, old_price: int, delta: float, url: str
+    snapshot: ProductSnapshot, old_price: Decimal, delta: float, url: str
 ) -> tuple[str, InlineKeyboardMarkup]:
     text = (
         "🔔 Цена снизилась!\n\n"
         f"🛍 {snapshot.name}\n"
-        f"📉 {old_price}₽ → {snapshot.price}₽ (снижение на {delta:.1f}%)\n"
+        f"📉 ≈ {_format_price(old_price)} → ≈ {_format_price(snapshot.price)} (снижение на {delta:.1f}%)\n"
         f"🛒 Купить: {url}\n\n"
+        "⚠️ <b>Цена может незначительно отличаться от витрины маркетплейса.</b>\n"
         "⚠️ Для возврата разницы отмените старый заказ в приложении и оформите новый."
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть товар", url=url)]])
@@ -66,7 +72,12 @@ async def scheduler_loop(bot: Bot, db: Database) -> None:
                     dropped, delta = is_price_dropped(item["last_price"], snapshot.price, item["threshold"])
                     if dropped:
                         text, keyboard = build_notification(snapshot, item["last_price"], delta, item["url"])
-                        await bot.send_message(chat_id=item["user_id"], text=text, reply_markup=keyboard)
+                        await bot.send_message(
+                            chat_id=item["user_id"],
+                            text=text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML",
+                        )
                         await db.update_last_price(item["id"], snapshot.price, snapshot.name)
                     else:
                         await db.mark_checked(item["id"])
