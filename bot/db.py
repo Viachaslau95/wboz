@@ -6,6 +6,39 @@ from app.db import Session, engine, transaction
 from app.db.models import TrackedItems, Users
 
 
+def _build_due_items_query():
+    return (
+        TrackedItems.select(
+            TrackedItems.id,
+            TrackedItems.user_id,
+            TrackedItems.platform,
+            TrackedItems.item_id,
+            TrackedItems.url,
+            TrackedItems.title,
+            TrackedItems.last_price,
+            TrackedItems.threshold,
+            TrackedItems.last_checked_at,
+            Users.check_interval,
+        )
+        .join(Users, Users.user_id == TrackedItems.user_id)
+        .where(TrackedItems.is_active.is_(True))
+    )
+
+
+def _is_item_due(
+    last_checked_at: datetime.datetime | None,
+    interval_minutes: int,
+    now: datetime.datetime,
+) -> bool:
+    if last_checked_at is None:
+        return True
+    if last_checked_at.tzinfo is None:
+        now_for_compare = now.replace(tzinfo=None)
+    else:
+        now_for_compare = now
+    return last_checked_at + datetime.timedelta(minutes=interval_minutes) <= now_for_compare
+
+
 class Database:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
@@ -144,35 +177,14 @@ class Database:
 
     async def get_due_items(self) -> list[dict]:
         async with Session() as session:
-            query = (
-                TrackedItems.select(
-                    TrackedItems.id,
-                    TrackedItems.user_id,
-                    TrackedItems.platform,
-                    TrackedItems.item_id,
-                    TrackedItems.url,
-                    TrackedItems.title,
-                    TrackedItems.last_price,
-                    TrackedItems.threshold,
-                    Users.check_interval,
-                )
-                .join(Users, Users.user_id == TrackedItems.user_id)
-                .where(TrackedItems.is_active.is_(True))
-            )
+            query = _build_due_items_query()
             rows = (await session.execute(query)).all()
             now = datetime.datetime.now(datetime.UTC)
             due_items: list[dict] = []
             for row in rows:
                 interval_minutes = max(int(row.check_interval), 10)
                 last_checked_at = row.last_checked_at
-                if last_checked_at is None:
-                    is_due = True
-                else:
-                    if last_checked_at.tzinfo is None:
-                        now_for_compare = now.replace(tzinfo=None)
-                    else:
-                        now_for_compare = now
-                    is_due = last_checked_at + datetime.timedelta(minutes=interval_minutes) <= now_for_compare
+                is_due = _is_item_due(last_checked_at, interval_minutes, now)
                 if is_due:
                     due_items.append(
                         {

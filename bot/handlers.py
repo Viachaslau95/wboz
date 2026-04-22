@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from aiohttp import ClientSession
 
 from app.settings import Settings
@@ -12,6 +22,18 @@ from bot.marketplaces import fetch_ozon_product, fetch_wb_product
 from bot.parsers import parse_marketplace_url
 
 router = Router()
+WB_BUTTON = "WB"
+OZON_BUTTON = "Ozon"
+ADD_LINK_BUTTON = "🔗 Добавить ссылку"
+BACK_BUTTON = "⬅️ Назад"
+WB_CALLBACK = "select_platform:wb"
+OZON_CALLBACK = "select_platform:ozon"
+ADD_LINK_CALLBACK = "platform_action:add_link"
+BACK_CALLBACK = "platform_action:back"
+
+_selected_platform: dict[int, str] = {}
+_awaiting_link: set[int] = set()
+URL_RE = re.compile(r"(https?://\S+|www\.\S+)")
 
 
 def _safe_int(value: str, fallback: int | None = None) -> int | None:
@@ -21,10 +43,41 @@ def _safe_int(value: str, fallback: int | None = None) -> int | None:
         return fallback
 
 
+def _extract_url_and_threshold(raw_text: str, default_threshold: int) -> tuple[str | None, int]:
+    parts = raw_text.split()
+    url: str | None = None
+
+    for token in parts:
+        if token.startswith(("https://", "http://", "www.")):
+            url = token
+            break
+
+    if url is None:
+        match = URL_RE.search(raw_text)
+        if match:
+            url = match.group(1)
+
+    threshold = default_threshold
+    if parts:
+        last_token = parts[-1]
+        parsed_threshold = _safe_int(last_token)
+        if parsed_threshold is not None and 1 <= parsed_threshold <= 100 and (url is None or last_token != url):
+            threshold = parsed_threshold
+
+    return url, threshold
+
+
+def _currency_code_by_url(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    if host.endswith(".by"):
+        return "BYN"
+    return "RUB"
+
+
 async def _fetch_product_snapshot(platform: str, item_id: str, url: str):
     async with ClientSession() as session:
         if platform == "wb":
-            return await fetch_wb_product(session, item_id)
+            return await fetch_wb_product(session, item_id, url)
         return await fetch_ozon_product(session, item_id, url)
 
 
@@ -34,20 +87,117 @@ def _get_user(message: Message) -> tuple[int, str | None]:
     return message.from_user.id, message.from_user.username
 
 
+def _main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=WB_BUTTON), KeyboardButton(text=OZON_BUTTON)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _main_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=WB_BUTTON, callback_data=WB_CALLBACK),
+                InlineKeyboardButton(text=OZON_BUTTON, callback_data=OZON_CALLBACK),
+            ]
+        ]
+    )
+
+
+def _platform_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=ADD_LINK_BUTTON, callback_data=ADD_LINK_CALLBACK)],
+            [InlineKeyboardButton(text=BACK_BUTTON, callback_data=BACK_CALLBACK)],
+        ]
+    )
+
+
+def _platform_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=ADD_LINK_BUTTON)],
+            [KeyboardButton(text=BACK_BUTTON)],
+        ],
+        resize_keyboard=True,
+    )
+
+
+async def _select_platform(message: Message, user_id: int, platform: str) -> None:
+    _selected_platform[user_id] = platform
+    _awaiting_link.discard(user_id)
+    readable = "Wildberries" if platform == "wb" else "Ozon"
+    await message.answer(
+        f"Вы выбрали {readable}.\n" "Теперь нажмите «🔗 Добавить ссылку».",
+        reply_markup=_platform_inline_keyboard(),
+    )
+
+
+async def _create_tracking(
+    *,
+    message: Message,
+    db: Database,
+    settings: Settings,
+    user_id: int,
+    url: str,
+    threshold: int,
+    expected_platform: str | None = None,
+) -> bool:
+    try:
+        platform, item_id, normalized_url = parse_marketplace_url(url)
+    except DetailedValidationError as exc:
+        await message.answer(f"Ошибка в ссылке: {exc}")
+        return False
+
+    if expected_platform is not None and platform != expected_platform:
+        readable = "Wildberries" if expected_platform == "wb" else "Ozon"
+        await message.answer(f"Сейчас выбран {readable}. Пришлите ссылку на этот маркетплейс.")
+        return False
+
+    active_tracks = await db.list_user_tracks(user_id)
+    if len(active_tracks) >= 5:
+        await message.answer("Лимит бесплатной версии: максимум 5 товаров на отслеживании.")
+        return False
+
+    snapshot = await _fetch_product_snapshot(platform, item_id, normalized_url)
+    if snapshot is None:
+        await message.answer("Не удалось получить данные товара. Проверьте ссылку и повторите.")
+        return False
+
+    track_id = await db.add_tracking(
+        user_id=user_id,
+        platform=platform,
+        item_id=item_id,
+        url=normalized_url,
+        title=snapshot.name,
+        current_price=snapshot.price,
+        threshold=threshold,
+    )
+    await message.answer(
+        f"Отслеживание добавлено #{track_id}.\n"
+        f"Товар: {snapshot.name}\n"
+        f"Текущая цена: {snapshot.price} {_currency_code_by_url(normalized_url)}\n"
+        f"Порог: {threshold}%"
+    )
+    return True
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, db: Database, settings: Settings) -> None:
     user_id, username = _get_user(message)
+    _selected_platform.pop(user_id, None)
+    _awaiting_link.discard(user_id)
     await db.ensure_user(
         user_id,
         username,
         settings.default_check_interval,
     )
     await message.answer(
-        "Привет! Я помогу отслеживать снижение цен на Wildberries и Ozon.\n\n"
-        "Быстрый старт:\n"
-        "`/track <ссылка> <порог%>`\n"
-        "Пример: `/track https://www.wildberries.ru/catalog/12345678/detail.aspx 15`\n\n"
-        "Если порог не указан, использую значение по умолчанию."
+        "Привет!\nЯ помогу отслеживать снижение цен на:\nWildberries и Ozon.\n\n" "Выберите маркетплейс:",
+        reply_markup=_main_inline_keyboard(),
     )
 
 
@@ -69,55 +219,29 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("track"))
 async def cmd_track(message: Message, command: CommandObject, db: Database, settings: Settings) -> None:
     user_id, username = _get_user(message)
+    _awaiting_link.discard(user_id)
     await db.ensure_user(
         user_id,
         username,
         settings.default_check_interval,
     )
-    args = (command.args or "").split()
-    if not args:
+    raw_args = (command.args or "").strip()
+    if not raw_args:
         await message.answer("Использование: /track <ссылка> <порог%>")
         return
 
-    url = args[0]
-    threshold = settings.default_threshold
-    if len(args) > 1:
-        parsed_threshold = _safe_int(args[1])
-        if parsed_threshold is None or parsed_threshold < 1 or parsed_threshold > 100:
-            await message.answer("Порог должен быть целым числом в диапазоне 1..100.")
-            return
-        threshold = parsed_threshold
-
-    try:
-        platform, item_id, normalized_url = parse_marketplace_url(url)
-    except DetailedValidationError as exc:
-        await message.answer(f"Ошибка в ссылке: {exc}")
+    url, threshold = _extract_url_and_threshold(raw_args, settings.default_threshold)
+    if url is None:
+        await message.answer("Не удалось найти ссылку в сообщении. Пришлите URL товара WB/Ozon.")
         return
 
-    active_tracks = await db.list_user_tracks(user_id)
-    if len(active_tracks) >= 5:
-        await message.answer("Лимит бесплатной версии: максимум 5 товаров на отслеживании.")
-        return
-
-    snapshot = await _fetch_product_snapshot(platform, item_id, normalized_url)
-    if snapshot is None:
-        await message.answer("Не удалось получить данные товара. Проверьте ссылку и повторите.")
-        return
-
-    track_id = await db.add_tracking(
+    await _create_tracking(
+        message=message,
+        db=db,
+        settings=settings,
         user_id=user_id,
-        platform=platform,
-        item_id=item_id,
-        url=normalized_url,
-        title=snapshot.name,
-        current_price=snapshot.price,
+        url=url,
         threshold=threshold,
-    )
-    await message.answer(
-        f"Отслеживание добавлено #{track_id}.\n"
-        f"Товар: {snapshot.name}\n"
-        f"Текущая цена: {snapshot.price}₽\n"
-        f"Порог: {threshold}%"
     )
 
 
@@ -229,6 +353,134 @@ async def cmd_subscribe(message: Message) -> None:
         "Бесплатный лимит: 5 товаров, интервал от 10 минут.\n"
         "При необходимости можно расширить до Freemium-тарифов."
     )
+
+
+@router.message(F.text == WB_BUTTON)
+async def wb_button(message: Message) -> None:
+    user_id, _ = _get_user(message)
+    await _select_platform(message, user_id, "wb")
+
+
+@router.message(F.text == OZON_BUTTON)
+async def ozon_button(message: Message) -> None:
+    user_id, _ = _get_user(message)
+    await _select_platform(message, user_id, "ozon")
+
+
+@router.callback_query(F.data == WB_CALLBACK)
+async def wb_callback(callback: CallbackQuery) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+    await _select_platform(message, callback.from_user.id, "wb")
+    await callback.answer()
+
+
+@router.callback_query(F.data == OZON_CALLBACK)
+async def ozon_callback(callback: CallbackQuery) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+    await _select_platform(message, callback.from_user.id, "ozon")
+    await callback.answer()
+
+
+@router.message(F.text == BACK_BUTTON)
+async def back_button(message: Message) -> None:
+    user_id, _ = _get_user(message)
+    _selected_platform.pop(user_id, None)
+    _awaiting_link.discard(user_id)
+    await message.answer("Выберите маркетплейс:", reply_markup=_main_inline_keyboard())
+
+
+@router.message(F.text == ADD_LINK_BUTTON)
+async def add_link_button(message: Message) -> None:
+    user_id, _ = _get_user(message)
+    platform = _selected_platform.get(user_id)
+    if platform is None:
+        await message.answer("Сначала выберите маркетплейс: WB или Ozon.", reply_markup=_main_inline_keyboard())
+        return
+    _awaiting_link.add(user_id)
+    readable = "Wildberries" if platform == "wb" else "Ozon"
+    await message.answer(
+        f"Пришлите ссылку на товар {readable}.\n"
+        "Можно сразу с порогом через пробел, например:\n"
+        "`https://www.wildberries.ru/catalog/12345678/detail.aspx 15`"
+    )
+
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_link_after_platform_choice(message: Message, db: Database, settings: Settings) -> None:
+    user_id, username = _get_user(message)
+    if user_id not in _awaiting_link:
+        return
+
+    await db.ensure_user(user_id, username, settings.default_check_interval)
+
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("Пришлите ссылку на товар.")
+        return
+
+    url, threshold = _extract_url_and_threshold(text, settings.default_threshold)
+    if url is None:
+        await message.answer("Не удалось найти ссылку в сообщении. Пришлите URL товара.")
+        return
+
+    created = await _create_tracking(
+        message=message,
+        db=db,
+        settings=settings,
+        user_id=user_id,
+        url=url,
+        threshold=threshold,
+        expected_platform=_selected_platform.get(user_id),
+    )
+    if created:
+        _awaiting_link.add(user_id)
+        readable = "Wildberries" if _selected_platform.get(user_id) == "wb" else "Ozon"
+        await message.answer(
+            f"Ссылка добавлена. Можете отправить следующую ссылку {readable}.",
+            reply_markup=_platform_inline_keyboard(),
+        )
+    else:
+        _awaiting_link.add(user_id)
+
+
+@router.callback_query(F.data == ADD_LINK_CALLBACK)
+async def add_link_callback(callback: CallbackQuery) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+    platform = _selected_platform.get(callback.from_user.id)
+    if platform is None:
+        await callback.answer("Сначала выберите маркетплейс", show_alert=False)
+        await message.answer("Выберите маркетплейс:", reply_markup=_main_inline_keyboard())
+        return
+    _awaiting_link.add(callback.from_user.id)
+    readable = "Wildberries" if platform == "wb" else "Ozon"
+    await message.answer(
+        f"Пришлите ссылку на товар {readable}.\n"
+        "Можно сразу с порогом через пробел, например:\n"
+        "`https://www.wildberries.ru/catalog/12345678/detail.aspx 15`"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == BACK_CALLBACK)
+async def back_callback(callback: CallbackQuery) -> None:
+    message = callback.message
+    if not isinstance(message, Message) or callback.from_user is None:
+        await callback.answer()
+        return
+    user_id = callback.from_user.id
+    _selected_platform.pop(user_id, None)
+    _awaiting_link.discard(user_id)
+    await message.answer("Выберите маркетплейс:", reply_markup=_main_inline_keyboard())
+    await callback.answer()
 
 
 @router.message(F.text.startswith("/"))

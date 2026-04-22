@@ -3,7 +3,12 @@ from urllib.parse import urlparse
 
 from bot.exceptions import DetailedValidationError
 
-WB_HOSTS = {"wildberries.ru", "www.wildberries.ru"}
+WB_HOSTS = {
+    "wildberries.ru",
+    "www.wildberries.ru",
+    "wildberries.by",
+    "www.wildberries.by",
+}
 OZON_HOSTS = {"ozon.ru", "www.ozon.ru"}
 
 WB_PATTERN = re.compile(r"/catalog/(?P<item_id>\d+)")

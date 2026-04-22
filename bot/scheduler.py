@@ -34,7 +34,7 @@ def build_notification(
 
 async def _fetch_snapshot(session: ClientSession, platform: str, item_id: str, url: str) -> ProductSnapshot | None:
     if platform == "wb":
-        return await fetch_wb_product(session, item_id)
+        return await fetch_wb_product(session, item_id, url)
     if platform == "ozon":
         return await fetch_ozon_product(session, item_id, url)
     return None
