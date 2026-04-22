@@ -41,10 +41,13 @@ class TrackedItems(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    initial_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     threshold: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     is_active: Mapped[bool] = mapped_column(nullable=False, server_default="true")
     last_checked_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_threshold_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_drop5_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_approach_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

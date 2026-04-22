@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import logging
 from decimal import Decimal
 
@@ -11,12 +12,24 @@ from app.settings import Settings
 from bot.db import Database
 from bot.formatting import format_price
 from bot.marketplaces import ProductSnapshot, fetch_ozon_product, fetch_wb_product
-from bot.pricing import is_price_below_threshold, should_send_threshold_alert
+from bot.pricing import (
+    APPROACH_ZONE_UPPER_FRACTION,
+    DROP_ALERT_MIN_FRACTION,
+    is_five_percent_drop_from_baseline,
+    is_in_approach_zone,
+    is_price_below_threshold,
+    should_send_threshold_alert,
+)
+from bot.schemas import DueTrackItem
 
 LOGGER = logging.getLogger(__name__)
 
 POLL_INTERVAL_SEC = 60
 _EMPTY_POLL_COUNT = 0
+
+
+def _item_url_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть товар", url=url)]])
 
 
 def build_notification(
@@ -30,27 +43,51 @@ def build_notification(
         f"🛒 Купить: {url}\n\n"
         "💡 Уже оформляли заказ? Хотите ещё дешевле? В приложении удалите старый заказ и оформите новый 😎"
     )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть товар", url=url)]])
-    return text, keyboard
+    return text, _item_url_keyboard(url)
+
+
+def build_drop5_notification(
+    name: str, initial_price: Decimal, current: Decimal, url: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    safe = html.escape(name)
+    text = (
+        f"📉 Сильное снижение (≥{float(DROP_ALERT_MIN_FRACTION) * 100:.0f}% от начальной цены)\n\n"
+        f"🛍 {safe}\n"
+        f"Начальная ≈ {format_price(initial_price)} → сейчас ≈ {format_price(current)}\n"
+        f"🛒 {url}"
+    )
+    return text, _item_url_keyboard(url)
+
+
+def build_approach_notification(
+    name: str, threshold: Decimal, current: Decimal, url: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    safe = html.escape(name)
+    upper = (threshold * (Decimal("1") + APPROACH_ZONE_UPPER_FRACTION)).quantize(Decimal("0.01"))
+    pct = float(APPROACH_ZONE_UPPER_FRACTION) * 100
+    text = (
+        f"🔔 Близко к порогу (цена в зоне выше порога, но &lt;{pct:.0f}% к нему снизу)\n\n"
+        f"🛍 {safe}\n"
+        f"🎯 Ваш порог: ≤ {format_price(threshold)}\n"
+        f"💰 Сейчас: {format_price(current)} (зона: &gt; порога и &lt; {format_price(upper)})\n"
+        f"🛒 {url}"
+    )
+    return text, _item_url_keyboard(url)
 
 
 def _log_empty_due_backlog(total_tracks: int, earliest_next: datetime.datetime | None) -> None:
     if total_tracks == 0:
-        LOGGER.info("Проверка цен: в очереди 0, в БД нет активных треков (users + tracked_items).")
+        LOGGER.info("Price poll: queue empty, no active tracks in DB.")
         return
     if earliest_next is not None:
         LOGGER.info(
-            "Проверка цен: в очереди 0, но активных треков: %s. "
-            "Следующий опрос товара не раньше %s (UTC). "
-            "Сократить паузу: /settings 1 (сбрасывает таймер).",
+            "Price poll: queue empty but %s active track(s). Next check not before %s (UTC). "
+            "To shorten wait: /settings 1 (resets per-track timers).",
             total_tracks,
             earliest_next.isoformat(),
         )
     else:
-        LOGGER.info(
-            "Проверка цен: в очереди 0 при %s тр. (рассинхрон; last_checked NULL должен сразу в очереди).",
-            total_tracks,
-        )
+        LOGGER.info("Price poll: queue empty with %s active tracks (state mismatch; check last_checked).", total_tracks)
 
 
 def _should_log_empty_tick(empty_poll_count: int) -> bool:
@@ -66,68 +103,89 @@ async def _fetch_snapshot(session: ClientSession, platform: str, item_id: str, u
 
 
 async def _check_one_tracked_item(
-    bot: Bot, db: Database, session: ClientSession, item: dict, settings: Settings
+    bot: Bot, db: Database, session: ClientSession, item: DueTrackItem, settings: Settings
 ) -> None:
-    snapshot = await _fetch_snapshot(session, item["platform"], item["item_id"], item["url"])
+    snapshot = await _fetch_snapshot(session, item.platform, item.item_id, item.url)
     if snapshot is None:
         await bot.send_message(
-            chat_id=item["user_id"],
+            chat_id=item.user_id,
             text=(
                 "Не удалось получить актуальную цену для товара:\n"
-                f"{item['url']}\n"
+                f"{item.url}\n"
                 "Товар снят с продажи или временно недоступен, отслеживание отключено."
             ),
         )
-        await db.remove_tracking(user_id=item["user_id"], track_id=item["id"])
+        await db.remove_tracking(user_id=item.user_id, track_id=item.id)
         return
 
-    is_below, delta = is_price_below_threshold(
-        item["last_price"],
-        snapshot.price,
-        item["threshold"],
-    )
     now = datetime.datetime.now(datetime.UTC)
+    last_stored: Decimal = item.last_price
+    current: Decimal = snapshot.price
+    thr: Decimal = item.threshold
+    is_below, delta = is_price_below_threshold(last_stored, current, thr)
+    cool_h = settings.THRESHOLD_ALERT_COOLDOWN_HOURS
+
     if not is_below:
+        if is_five_percent_drop_from_baseline(item.initial_price, current) and should_send_threshold_alert(
+            item.last_drop5_notified_at, now, cool_h
+        ):
+            t5, k5 = build_drop5_notification(snapshot.name, item.initial_price, current, item.url)
+            await bot.send_message(
+                chat_id=item.user_id,
+                text=t5,
+                reply_markup=k5,
+                parse_mode="HTML",
+            )
+            await db.record_secondary_alert_sent(item.id, "drop5")
+
+        if is_in_approach_zone(current, thr) and should_send_threshold_alert(
+            item.last_approach_notified_at, now, cool_h
+        ):
+            ta, ka = build_approach_notification(snapshot.name, thr, current, item.url)
+            await bot.send_message(
+                chat_id=item.user_id,
+                text=ta,
+                reply_markup=ka,
+                parse_mode="HTML",
+            )
+            await db.record_secondary_alert_sent(item.id, "approach")
+
         await db.apply_poll_result(
-            item["id"],
-            snapshot.price,
+            item.id,
+            current,
             snapshot.name,
             price_above_threshold=True,
             sent_threshold_alert=False,
         )
         return
 
-    last_notified = item.get("last_threshold_notified_at")
-    send_alert = should_send_threshold_alert(
-        last_notified,
-        now,
-        settings.THRESHOLD_ALERT_COOLDOWN_HOURS,
-    )
+    last_notified = item.last_threshold_notified_at
+    send_alert = should_send_threshold_alert(last_notified, now, cool_h)
     if send_alert:
         text, keyboard = build_notification(
             snapshot,
-            item["last_price"],
-            item["threshold"],
+            last_stored,
+            thr,
             delta,
-            item["url"],
+            item.url,
         )
         await bot.send_message(
-            chat_id=item["user_id"],
+            chat_id=item.user_id,
             text=text,
             reply_markup=keyboard,
             parse_mode="HTML",
         )
         await db.apply_poll_result(
-            item["id"],
-            snapshot.price,
+            item.id,
+            current,
             snapshot.name,
             price_above_threshold=False,
             sent_threshold_alert=True,
         )
     else:
         await db.apply_poll_result(
-            item["id"],
-            snapshot.price,
+            item.id,
+            current,
             snapshot.name,
             price_above_threshold=False,
             sent_threshold_alert=False,
@@ -152,7 +210,7 @@ async def scheduler_loop(bot: Bot, db: Database, settings: Settings) -> None:
                 continue
 
             _EMPTY_POLL_COUNT = 0
-            LOGGER.info("Проверка цен: в очереди %s товар(ов).", len(items))
+            LOGGER.info("Price poll: %s product(s) due.", len(items))
             async with ClientSession() as session:
                 for item in items:
                     await _check_one_tracked_item(bot, db, session, item, settings)

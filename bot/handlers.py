@@ -25,15 +25,14 @@ from bot.exceptions import DetailedValidationError
 from bot.formatting import format_price
 from bot.marketplaces import ProductSnapshot, fetch_ozon_product, fetch_wb_product
 from bot.parsers import parse_marketplace_url
+from bot.schemas import UserTrackListItem
 
 router = Router()
 WB_BUTTON = "WB"
-# OZON_BUTTON = "Ozon"  # временно отключено
 ADD_LINK_BUTTON = "🔗 Добавить ссылку"
 BACK_BUTTON = "⬅️ Назад"
 MY_TRACKS_BUTTON = "📦 Мои товары"
 WB_CALLBACK = "select_platform:wb"
-# OZON_CALLBACK = "select_platform:ozon"  # временно отключено
 ADD_LINK_CALLBACK = "platform_action:add_link"
 BACK_CALLBACK = "platform_action:back"
 MY_TRACKS_CALLBACK = "platform_action:my_tracks"
@@ -111,16 +110,16 @@ def _price_confirmation_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def _format_track_line(idx: int, item: dict) -> str:
-    currency = _currency_code_by_url(item["url"])
-    title = html.escape(item["title"] or item["item_id"])
-    url = html.escape(item["url"], quote=True)
+def _format_track_line(idx: int, item: UserTrackListItem) -> str:
+    currency = _currency_code_by_url(item.url)
+    title = html.escape(item.title or item.item_id)
+    url = html.escape(item.url, quote=True)
     return (
-        f"<b>{idx}. {item['platform'].upper()}</b>\n"
+        f"<b>{idx}. {item.platform.upper()}</b>\n"
         f"Название: {title}\n"
         f'Ссылка: <a href="{url}">Открыть товар</a>\n'
-        f"Текущая цена: ≈ {format_price(item['last_price'])} {currency}\n"
-        f"Пороговая цена: ≤ {format_price(item['threshold'])} {currency}"
+        f"Текущая цена: ≈ {format_price(item.last_price)} {currency}\n"
+        f"Пороговая цена: ≤ {format_price(item.threshold)} {currency}"
     )
 
 
@@ -174,7 +173,7 @@ def _get_user(message: Message) -> tuple[int, str | None]:
 def _main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=WB_BUTTON)],  # , KeyboardButton(text=OZON_BUTTON) — Ozon временно
+            [KeyboardButton(text=WB_BUTTON)],
             [KeyboardButton(text=MY_TRACKS_BUTTON)],
         ],
         resize_keyboard=True,
@@ -186,7 +185,6 @@ def _main_inline_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text=WB_BUTTON, callback_data=WB_CALLBACK),
-                # InlineKeyboardButton(text=OZON_BUTTON, callback_data=OZON_CALLBACK) — Ozon временно
             ],
             [InlineKeyboardButton(text=MY_TRACKS_BUTTON, callback_data=MY_TRACKS_CALLBACK)],
         ]
@@ -337,7 +335,7 @@ async def _save_tracking_with_snapshot(
     return True
 
 
-def _build_tracks_message(tracks: list[dict]) -> str:
+def _build_tracks_message(tracks: list[UserTrackListItem]) -> str:
     if not tracks:
         return "У вас пока нет товаров."
     return "Ваши товары:"
@@ -376,7 +374,7 @@ async def _send_user_tracks_for_user(
     for idx, item in enumerate(tracks, start=1):
         await message.answer(
             _format_track_line(idx, item),
-            reply_markup=_build_track_action_keyboard(int(item["id"]), idx),
+            reply_markup=_build_track_action_keyboard(item.id, idx),
             parse_mode="HTML",
             disable_web_page_preview=True,
         )
@@ -480,7 +478,7 @@ async def cmd_untrack(message: Message, command: CommandObject, db: Database) ->
         await message.answer("Товар с таким номером не найден.")
         return
 
-    track_id = tracks[number - 1]["id"]
+    track_id = tracks[number - 1].id
     updated = await db.remove_tracking(user_id, track_id)
     if not updated:
         await message.answer("Не удалось отключить отслеживание.")
@@ -507,8 +505,8 @@ async def cmd_setthreshold(message: Message, command: CommandObject, db: Databas
         await message.answer("Товар с таким номером не найден.")
         return
 
-    track_id = tracks[number - 1]["id"]
-    current_price = Decimal(str(tracks[number - 1]["last_price"]))
+    track_id = tracks[number - 1].id
+    current_price = tracks[number - 1].last_price
     if not _is_valid_threshold_price(threshold, current_price):
         await message.answer(
             "Пороговая цена должна быть ниже текущей.\n"
@@ -548,7 +546,7 @@ async def cmd_settings(message: Message, command: CommandObject, db: Database, s
         return
     reply = (
         "Настройки пользователя:\n"
-        f"Интервал проверки: {user_settings['check_interval']} минут\n"
+        f"Интервал проверки: {user_settings.check_interval} минут\n"
         "Тип уведомлений: стандартные сообщения в Telegram"
     )
     if interval_changed:
