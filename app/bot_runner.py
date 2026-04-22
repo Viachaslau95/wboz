@@ -32,7 +32,7 @@ async def run_bot(settings: Settings) -> None:
     dp["db"] = db
     dp["settings"] = settings
 
-    scheduler_task = asyncio.create_task(scheduler_loop(bot, db))
+    scheduler_task = asyncio.create_task(scheduler_loop(bot, db, settings))
 
     try:
         await dp.start_polling(bot)

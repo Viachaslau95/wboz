@@ -1,9 +1,13 @@
+from decimal import Decimal
+
 import pytest
 
 from bot.handlers import (
     _build_track_action_keyboard,
     _currency_code_by_url,
     _extract_track_id_from_callback,
+    _extract_url_and_threshold,
+    _is_valid_threshold_price,
     _resolve_tracks_request_user,
 )
 
@@ -75,3 +79,50 @@ def test_build_track_action_keyboard() -> None:
     callback_data = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert labels == ["🗑 Удалить #2"]
     assert callback_data == ["track_delete:10"]
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected_url", "expected_threshold"),
+    [
+        # happy path: decimal with dot
+        (
+            "https://www.wildberries.by/catalog/1/detail.aspx 70.70",
+            "https://www.wildberries.by/catalog/1/detail.aspx",
+            "70.70",
+        ),
+        # boundary: decimal with comma
+        (
+            "https://www.wildberries.by/catalog/1/detail.aspx 70,70",
+            "https://www.wildberries.by/catalog/1/detail.aspx",
+            "70.70",
+        ),
+        # failure path: no threshold provided
+        ("https://www.wildberries.by/catalog/1/detail.aspx", "https://www.wildberries.by/catalog/1/detail.aspx", None),
+    ],
+)
+def test_extract_url_and_threshold_supports_decimal_price(
+    raw_text: str,
+    expected_url: str | None,
+    expected_threshold: str | None,
+) -> None:
+    url, threshold = _extract_url_and_threshold(raw_text)
+    assert url == expected_url
+    if expected_threshold is None:
+        assert threshold is None
+    else:
+        assert str(threshold) == expected_threshold
+
+
+@pytest.mark.parametrize(
+    ("threshold", "current", "expected"),
+    [
+        # happy path
+        (Decimal("70.00"), Decimal("100.00"), True),
+        # boundary
+        (Decimal("100.00"), Decimal("100.00"), False),
+        # failure path
+        (Decimal("120.00"), Decimal("100.00"), False),
+    ],
+)
+def test_is_valid_threshold_price(threshold: Decimal, current: Decimal, expected: bool) -> None:
+    assert _is_valid_threshold_price(threshold, current) is expected

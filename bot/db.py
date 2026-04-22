@@ -19,6 +19,7 @@ def _build_due_items_query():
             TrackedItems.last_price,
             TrackedItems.threshold,
             TrackedItems.last_checked_at,
+            TrackedItems.last_threshold_notified_at,
             Users.check_interval,
         )
         .join(Users, Users.user_id == TrackedItems.user_id)
@@ -38,6 +39,21 @@ def _is_item_due(
     else:
         now_for_compare = now
     return last_checked_at + datetime.timedelta(minutes=interval_minutes) <= now_for_compare
+
+
+def _due_item_from_row(row) -> dict:
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "platform": row.platform,
+        "item_id": row.item_id,
+        "url": row.url,
+        "title": row.title,
+        "last_price": row.last_price,
+        "threshold": row.threshold,
+        "check_interval": row.check_interval,
+        "last_threshold_notified_at": row.last_threshold_notified_at,
+    }
 
 
 class Database:
@@ -72,7 +88,7 @@ class Database:
         url: str,
         title: str,
         current_price: Decimal,
-        threshold: int,
+        threshold: Decimal,
     ) -> int:
         async with transaction() as session:
             query = (
@@ -138,7 +154,7 @@ class Database:
             result = await session.execute(query)
             return len(result.scalars().all())
 
-    async def set_threshold(self, user_id: int, track_id: int, threshold: int) -> int:
+    async def set_threshold(self, user_id: int, track_id: int, threshold: Decimal) -> int:
         async with transaction() as session:
             query = (
                 TrackedItems.update()
@@ -147,7 +163,7 @@ class Database:
                     & (TrackedItems.id == track_id)
                     & (TrackedItems.is_active.is_(True))
                 )
-                .values(threshold=threshold)
+                .values(threshold=threshold, last_threshold_notified_at=None)
                 .returning(TrackedItems.id)
             )
             result = await session.execute(query)
@@ -173,52 +189,64 @@ class Database:
 
     async def update_user_interval(self, user_id: int, check_interval: int) -> None:
         async with transaction() as session:
-            query = Users.update().where(Users.user_id == user_id).values(check_interval=check_interval)
-            await session.execute(query)
+            await session.execute(Users.update().where(Users.user_id == user_id).values(check_interval=check_interval))
+            # Сбрасываем таймер проверок: иначе после смены интервала ждёте ещё старый «хвост» (last_check + old_interval).
+            await session.execute(
+                TrackedItems.update()
+                .where(
+                    (TrackedItems.user_id == user_id) & (TrackedItems.is_active.is_(True)),
+                )
+                .values(last_checked_at=None)
+            )
 
-    async def get_due_items(self) -> list[dict]:
+    async def poll_due_with_backlog(
+        self,
+    ) -> tuple[list[dict], int, datetime.datetime | None]:
+        """(due, всего треков с join на users, ближайшее last_checked+interval, если сейчас никого «по сроку»)."""
         async with Session() as session:
             query = _build_due_items_query()
             rows = (await session.execute(query)).all()
-            now = datetime.datetime.now(datetime.UTC)
-            due_items: list[dict] = []
-            for row in rows:
-                interval_minutes = max(int(row.check_interval), 3)
-                last_checked_at = row.last_checked_at
-                is_due = _is_item_due(last_checked_at, interval_minutes, now)
-                if is_due:
-                    due_items.append(
-                        {
-                            "id": row.id,
-                            "user_id": row.user_id,
-                            "platform": row.platform,
-                            "item_id": row.item_id,
-                            "url": row.url,
-                            "title": row.title,
-                            "last_price": row.last_price,
-                            "threshold": row.threshold,
-                            "check_interval": row.check_interval,
-                        }
-                    )
-            return due_items
+        now = datetime.datetime.now(datetime.UTC)
+        due_items: list[dict] = []
+        next_at_candidates: list[datetime.datetime] = []
+        for row in rows:
+            interval_minutes = max(int(row.check_interval), 1)
+            last_checked_at = row.last_checked_at
+            is_due = _is_item_due(last_checked_at, interval_minutes, now)
+            if is_due:
+                due_items.append(_due_item_from_row(row))
+            elif last_checked_at is not None:
+                nxt = last_checked_at + datetime.timedelta(minutes=interval_minutes)
+                next_at_candidates.append(nxt)
+        earliest_next: datetime.datetime | None = None
+        if next_at_candidates:
+            earliest_next = min(x.astimezone(datetime.UTC) for x in next_at_candidates)
+        return due_items, len(rows), earliest_next
 
-    async def mark_checked(self, track_id: int) -> None:
+    async def get_due_items(self) -> list[dict]:
+        due, _, _ = await self.poll_due_with_backlog()
+        return due
+
+    async def apply_poll_result(
+        self,
+        track_id: int,
+        current_price: Decimal,
+        title: str | None,
+        *,
+        price_above_threshold: bool,
+        sent_threshold_alert: bool,
+    ) -> None:
+        """Обновляет last_price и last_checked_at; last_threshold_notified_at — по сценарию опроса."""
+        now = datetime.datetime.now(datetime.UTC)
+        values: dict = {
+            "last_price": current_price,
+            "last_checked_at": now,
+        }
+        if title:
+            values["title"] = title
+        if price_above_threshold:
+            values["last_threshold_notified_at"] = None
+        elif sent_threshold_alert:
+            values["last_threshold_notified_at"] = now
         async with transaction() as session:
-            query = (
-                TrackedItems.update()
-                .where(TrackedItems.id == track_id)
-                .values(last_checked_at=datetime.datetime.now(datetime.UTC))
-            )
-            await session.execute(query)
-
-    async def update_last_price(self, track_id: int, current_price: Decimal, title: str | None = None) -> None:
-        async with transaction() as session:
-            values = {
-                "last_price": current_price,
-                "last_checked_at": datetime.datetime.now(datetime.UTC),
-            }
-            if title:
-                values["title"] = title
-
-            query = TrackedItems.update().where(TrackedItems.id == track_id).values(**values)
-            await session.execute(query)
+            await session.execute(TrackedItems.update().where(TrackedItems.id == track_id).values(**values))

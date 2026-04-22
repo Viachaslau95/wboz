@@ -155,6 +155,7 @@ def _extract_price_from_wb_product(product: dict[str, Any], size_option_id: int 
 async def fetch_wb_product(session: ClientSession, item_id: str, url: str | None = None) -> ProductSnapshot | None:
     size_option_id = _extract_wb_size_option_id(url)
     params = {"nmIds": item_id}
+    LOGGER.info("Опрос API Wildberries (card.wb.ru, cards/v2/detail), nm=%s", item_id)
     async with session.get(WB_URL, params=params, timeout=ClientTimeout(total=15)) as response:
         if response.status == 200:
             payload = await response.json()
@@ -169,6 +170,7 @@ async def fetch_wb_product(session: ClientSession, item_id: str, url: str | None
             LOGGER.warning("WB request failed for %s with status %s", item_id, response.status)
 
     params_v4 = _build_wb_v4_params(item_id, url)
+    LOGGER.info("Опрос API Wildberries (card.wb.ru, cards/v4/detail), nm=%s", item_id)
     async with session.get(WB_V4_URL, params=params_v4, timeout=ClientTimeout(total=15)) as response:
         if response.status == 200:
             payload = await response.json()

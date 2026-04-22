@@ -38,7 +38,7 @@ def parse_marketplace_url(raw_url: str) -> tuple[str, str, str]:
     if host in OZON_HOSTS:
         match = OZON_PATTERN.search(parsed.path)
         if not match:
-            raise DetailedValidationError("Не удалось извлечь ID товара Ozon")
+            raise DetailedValidationError("Не удалось извлечь ID товара")
         return "ozon", match.group("item_id"), url
 
-    raise DetailedValidationError("Поддерживаются только ссылки Wildberries и Ozon")
+    raise DetailedValidationError("Поддерживаются только ссылки Wildberries")
