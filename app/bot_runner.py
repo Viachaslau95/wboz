@@ -22,7 +22,7 @@ async def run_bot(settings: Settings) -> None:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
-    db = Database(settings.database_url)
+    db = Database()
     await db.init()
 
     bot = Bot(token=settings.bot_token)

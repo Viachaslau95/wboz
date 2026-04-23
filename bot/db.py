@@ -73,11 +73,8 @@ def _due_item_from_row(row: Row) -> DueTrackItem:
 
 
 class Database:
-    def __init__(self, database_url: str) -> None:
-        self._database_url = database_url
-
     async def init(self) -> None:
-        _ = self._database_url
+        pass
 
     async def close(self) -> None:
         await engine.dispose()
@@ -225,10 +222,6 @@ class Database:
             earliest = min(x.astimezone(datetime.UTC) for x in next_candidates)
         return due, len(rows), earliest
 
-    async def get_due_items(self) -> list[DueTrackItem]:
-        due, _, _ = await self.poll_due_with_backlog()
-        return due
-
     async def apply_poll_result(
         self,
         track_id: int,
@@ -253,10 +246,10 @@ class Database:
             await session.execute(update(TrackedItems).where(TrackedItems.id == track_id).values(**values))
 
     async def record_secondary_alert_sent(self, track_id: int, kind: str) -> None:
-        now = datetime.datetime.now(datetime.UTC)
-        column = "last_drop5_notified_at" if kind == "drop5" else "last_approach_notified_at"
         if kind not in ("drop5", "approach"):
             msg = f"unknown secondary alert kind: {kind}"
             raise ValueError(msg)
+        now = datetime.datetime.now(datetime.UTC)
+        column = "last_drop5_notified_at" if kind == "drop5" else "last_approach_notified_at"
         async with transaction() as session:
             await session.execute(update(TrackedItems).where(TrackedItems.id == track_id).values(**{column: now}))

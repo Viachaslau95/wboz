@@ -2,14 +2,17 @@ from decimal import Decimal
 
 import pytest
 
-from bot.handlers import (
-    _build_track_action_keyboard,
-    _currency_code_by_url,
-    _extract_track_id_from_callback,
-    _extract_url_and_threshold,
-    _is_valid_threshold_price,
-    _resolve_tracks_request_user,
+from bot.input_parse import (
+    extract_track_id_from_callback,
+    extract_url_and_threshold,
+    is_valid_threshold_price,
 )
+from bot.telegram_ui import (
+    DELETE_TRACK_CALLBACK_PREFIX,
+    build_track_action_keyboard,
+    currency_code_by_url,
+)
+from bot.tracking_ops import resolve_tracks_request_user
 
 
 @pytest.mark.parametrize(
@@ -21,7 +24,7 @@ from bot.handlers import (
     ],
 )
 def test_currency_code_by_url(url: str, expected: str) -> None:
-    assert _currency_code_by_url(url) == expected
+    assert currency_code_by_url(url) == expected
 
 
 @pytest.mark.parametrize(
@@ -50,7 +53,7 @@ def test_resolve_tracks_request_user(
     expected_user_id: int,
     expected_username: str | None,
 ) -> None:
-    assert _resolve_tracks_request_user(
+    assert resolve_tracks_request_user(
         message_user_id=message_user_id,
         message_username=message_username,
         callback_user_id=callback_user_id,
@@ -70,11 +73,11 @@ def test_resolve_tracks_request_user(
     ],
 )
 def test_extract_track_id_from_callback(data: str, expected_track_id: int | None) -> None:
-    assert _extract_track_id_from_callback(data) == expected_track_id
+    assert extract_track_id_from_callback(data, DELETE_TRACK_CALLBACK_PREFIX) == expected_track_id
 
 
 def test_build_track_action_keyboard() -> None:
-    keyboard = _build_track_action_keyboard(10, 2)
+    keyboard = build_track_action_keyboard(10, 2)
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     callback_data = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert labels == ["🗑 Удалить #2"]
@@ -105,7 +108,7 @@ def test_extract_url_and_threshold_supports_decimal_price(
     expected_url: str | None,
     expected_threshold: str | None,
 ) -> None:
-    url, threshold = _extract_url_and_threshold(raw_text)
+    url, threshold = extract_url_and_threshold(raw_text)
     assert url == expected_url
     if expected_threshold is None:
         assert threshold is None
@@ -125,4 +128,4 @@ def test_extract_url_and_threshold_supports_decimal_price(
     ],
 )
 def test_is_valid_threshold_price(threshold: Decimal, current: Decimal, expected: bool) -> None:
-    assert _is_valid_threshold_price(threshold, current) is expected
+    assert is_valid_threshold_price(threshold, current) is expected

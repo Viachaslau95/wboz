@@ -43,6 +43,18 @@ class UserTrackListItem(BaseModel):
     created_at: datetime.datetime
 
 
+class PendingTrackDraft(BaseModel):
+    """In-memory data while the user adds a product (before the row is saved)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    platform: str
+    item_id: str
+    url: str
+    name: str
+    price: Decimal
+
+
 class UserSettings(BaseModel):
     """Per-user row used by /settings."""
 

@@ -25,8 +25,6 @@ WB_BY_HOSTS = {"wildberries.by", "www.wildberries.by"}
 # wildberries.by: v4 (byn) + a dest with per-size logistics; fallback dest if v4 fails.
 WB_BY_VITRINE_DEST = "507"
 WB_BY_DESTINATION = "12358562"
-# Adjust v4 "product" by (logistics * this percent) / 100 to match storefront display.
-WB_BY_VITRINE_LOGISTICS_PCT = 83
 
 
 @dataclass(slots=True, frozen=True)
@@ -141,25 +139,14 @@ def _build_wb_v4_params(item_id: str, url: str | None) -> dict[str, str]:
 
 
 def _byn_vitrine_kopeks_from_price_dict(price_info: dict[str, Any]) -> int | None:
-    """Kopek price from v4 `price` dict; for .by, subtracts part of logistics to match the site."""
+    """Kopeks from v4 `sizes[].price` for .by: use `product`, else `basic`."""
     raw_product = price_info.get("product")
     if raw_product is not None and isinstance(raw_product, (int, float)) and raw_product > 0:
-        p = int(raw_product)
-    else:
-        p = 0
-    if p <= 0:
-        b = price_info.get("basic")
-        if isinstance(b, (int, float)) and b > 0:
-            p = int(b)
-        else:
-            return None
-    raw_log = price_info.get("logistics")
-    logistics_kop = int(raw_log) if isinstance(raw_log, (int, float)) and raw_log > 0 else 0
-    if logistics_kop:
-        p = p - (logistics_kop * WB_BY_VITRINE_LOGISTICS_PCT) // 100
-    if p <= 0:
-        return None
-    return p
+        return int(raw_product)
+    b = price_info.get("basic")
+    if isinstance(b, (int, float)) and b > 0:
+        return int(b)
+    return None
 
 
 def _byn_vitrine_default_size_price(sizes: list[Any]) -> Decimal | None:

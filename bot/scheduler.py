@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiohttp import ClientSession
+from aiohttp import ClientError, ClientSession
 
 from app.settings import Settings
 from bot.db import Database
@@ -105,7 +105,20 @@ async def _fetch_snapshot(session: ClientSession, platform: str, item_id: str, u
 async def _check_one_tracked_item(
     bot: Bot, db: Database, session: ClientSession, item: DueTrackItem, settings: Settings
 ) -> None:
-    snapshot = await _fetch_snapshot(session, item.platform, item.item_id, item.url)
+    try:
+        snapshot = await _fetch_snapshot(session, item.platform, item.item_id, item.url)
+    except TimeoutError as exc:
+        LOGGER.warning(
+            "Price poll: timeout for track_id=%s (user %s, platform=%s): %s",
+            item.id,
+            item.user_id,
+            item.platform,
+            exc,
+        )
+        return
+    except ClientError as exc:
+        LOGGER.warning("Price poll: client error for track_id=%s: %s", item.id, exc)
+        return
     if snapshot is None:
         await bot.send_message(
             chat_id=item.user_id,

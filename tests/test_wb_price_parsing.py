@@ -110,7 +110,8 @@ def test_byn_no_size_uses_min_rank_size_not_min_sale() -> None:
     assert _extract_price_from_wb_product(product, None, url=by_url) == Decimal("58.64")
 
 
-def test_byn_vitrine_subtracts_logistics_from_v4_product() -> None:
+def test_byn_vitrine_uses_product_kopeks_without_logistics_hack() -> None:
+    """`product` kopeks match the card price; subtracting logistics broke heavy items (tyres)."""
     by_url = "https://www.wildberries.by/catalog/739959261/detail.aspx?size=1056352700"
     product = {
         "sizes": [
@@ -120,4 +121,19 @@ def test_byn_vitrine_subtracts_logistics_from_v4_product() -> None:
             },
         ],
     }
-    assert _extract_price_from_wb_product(product, 1056352700, url=by_url) == Decimal("104.94")
+    assert _extract_price_from_wb_product(product, 1056352700, url=by_url) == Decimal("108.90")
+
+
+def test_byn_single_size_high_logistics_matches_product_not_subtracted() -> None:
+    """Real v4 sample: large logistics must not shrink `product` toward ~half the site price."""
+    by_url = "https://www.wildberries.by/catalog/325059924/detail.aspx"
+    product = {
+        "sizes": [
+            {
+                "optionId": 488031092,
+                "rank": 0,
+                "price": {"basic": 44939, "product": 16402, "logistics": 10036, "return": 0},
+            },
+        ],
+    }
+    assert _extract_price_from_wb_product(product, None, url=by_url) == Decimal("164.02")
