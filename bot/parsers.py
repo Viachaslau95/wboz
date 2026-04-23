@@ -3,7 +3,12 @@ from urllib.parse import urlparse
 
 from bot.exceptions import DetailedValidationError
 
-WB_HOSTS = {"wildberries.ru", "www.wildberries.ru"}
+WB_HOSTS = {
+    "wildberries.ru",
+    "www.wildberries.ru",
+    "wildberries.by",
+    "www.wildberries.by",
+}
 OZON_HOSTS = {"ozon.ru", "www.ozon.ru"}
 
 WB_PATTERN = re.compile(r"/catalog/(?P<item_id>\d+)")
@@ -33,7 +38,7 @@ def parse_marketplace_url(raw_url: str) -> tuple[str, str, str]:
     if host in OZON_HOSTS:
         match = OZON_PATTERN.search(parsed.path)
         if not match:
-            raise DetailedValidationError("Не удалось извлечь ID товара Ozon")
+            raise DetailedValidationError("Не удалось извлечь ID товара")
         return "ozon", match.group("item_id"), url
 
-    raise DetailedValidationError("Поддерживаются только ссылки Wildberries и Ozon")
+    raise DetailedValidationError("Поддерживаются только ссылки Wildberries")

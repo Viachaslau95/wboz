@@ -23,8 +23,9 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str = Field(default="")
     DATABASE_URL: str = Field(default="postgresql://wboz:wboz@localhost:5432/wboz")
-    DEFAULT_THRESHOLD: int = Field(default=10, ge=1, le=100)
-    DEFAULT_CHECK_INTERVAL: int = Field(default=30, ge=10)
+    DEFAULT_THRESHOLD: int = Field(ge=1, le=100)
+    DEFAULT_CHECK_INTERVAL: int = Field(ge=1, le=1440)
+    THRESHOLD_ALERT_COOLDOWN_HOURS: int = Field(default=24, ge=1, le=24 * 30)
 
     DEBUG: bool = Field(default=False)
     APP_SERVICE_NAME: str = Field(default="wboz")
@@ -70,4 +71,4 @@ class Settings(BaseSettings):
         return self.DATABASE_URL
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg] — DEFAULT_* читаются из env / env_file

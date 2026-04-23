@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     func,
@@ -38,10 +40,15 @@ class TrackedItems(Base):
     item_id: Mapped[str] = mapped_column(String(64), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_price: Mapped[int] = mapped_column(Integer, nullable=False)
-    threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    api_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    api_baseline_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    manual_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    threshold_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     is_active: Mapped[bool] = mapped_column(nullable=False, server_default="true")
     last_checked_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_threshold_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_drop5_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_approach_notified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
