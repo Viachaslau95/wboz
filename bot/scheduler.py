@@ -137,6 +137,8 @@ async def _check_one_tracked_item(
     should_set_api_baseline = item.api_baseline_price is None
     api_baseline = item.api_baseline_price or current
     thr: Decimal = item.threshold_price
+    approach_upper_bound = (thr * (Decimal("1") + APPROACH_ZONE_UPPER_FRACTION)).quantize(Decimal("0.01"))
+    baseline_in_approach_zone = api_baseline > thr and api_baseline <= approach_upper_bound
     is_below, delta = is_price_below_threshold(last_stored, current, thr)
     cool_h = settings.THRESHOLD_ALERT_COOLDOWN_HOURS
 
@@ -153,8 +155,11 @@ async def _check_one_tracked_item(
             )
             await db.record_secondary_alert_sent(item.id, "drop5")
 
-        if is_in_approach_zone(current, thr) and should_send_threshold_alert(
-            item.last_approach_notified_at, now, cool_h
+        # Skip "approach" notifications when baseline itself is already inside the 2% zone.
+        if (
+            not baseline_in_approach_zone
+            and is_in_approach_zone(current, thr)
+            and should_send_threshold_alert(item.last_approach_notified_at, now, cool_h)
         ):
             ta, ka = build_approach_notification(snapshot.name, thr, current, item.url)
             await bot.send_message(

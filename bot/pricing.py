@@ -7,8 +7,9 @@ from decimal import Decimal
 
 # Min drop (fraction of baseline) for the "strong drop" alert; baseline = price at track creation.
 DROP_ALERT_MIN_FRACTION = Decimal("0.05")
-# "Near threshold" band above the threshold, as a fraction of the threshold (5% => threshold..threshold*1.05).
-APPROACH_ZONE_UPPER_FRACTION = Decimal("0.05")
+# "Near threshold" band above the threshold, as a fraction of the threshold (2% => threshold..threshold*1.02).
+APPROACH_ZONE_UPPER_FRACTION = Decimal("0.02")
+MIN_THRESHOLD_DROP_FRACTION = Decimal("0.02")
 
 
 def should_send_threshold_alert(
@@ -53,3 +54,8 @@ def is_in_approach_zone(current: Decimal, threshold: Decimal) -> bool:
         return False
     upper = threshold * (Decimal("1") + APPROACH_ZONE_UPPER_FRACTION)
     return current > threshold and current < upper
+
+
+def max_threshold_from_api_price(api_price: Decimal) -> Decimal:
+    """Threshold must be at least 2% lower than the API price."""
+    return (api_price * (Decimal("1") - MIN_THRESHOLD_DROP_FRACTION)).quantize(Decimal("0.01"))

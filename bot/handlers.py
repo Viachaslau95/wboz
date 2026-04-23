@@ -18,6 +18,7 @@ from bot.input_parse import (
     safe_int,
 )
 from bot.marketplaces import ProductSnapshot
+from bot.pricing import max_threshold_from_api_price
 from bot.schemas import PendingTrackDraft
 from bot.session import flow
 from bot.telegram_ui import (
@@ -48,6 +49,11 @@ from bot.tracking_ops import (
 )
 
 router = Router()
+
+
+async def _return_to_start_menu(message: Message, user_id: int) -> None:
+    flow.clear(user_id)
+    await message.answer("Нажмите «WB»:", reply_markup=main_inline_keyboard())
 
 
 @router.message(Command("start"))
@@ -95,11 +101,13 @@ async def cmd_track(message: Message, command: CommandObject, db: Database, sett
     raw_args = (command.args or "").strip()
     if not raw_args:
         await message.answer("Использование: /track <ссылка> [пороговая_цена]")
+        await _return_to_start_menu(message, user_id)
         return
 
     url, _ = extract_url_and_threshold(raw_args)
     if url is None:
         await message.answer("Не удалось найти ссылку в сообщении. Пришлите URL товара Wildberries.")
+        await _return_to_start_menu(message, user_id)
         return
 
     prepared = await prepare_tracking(
@@ -109,6 +117,7 @@ async def cmd_track(message: Message, command: CommandObject, db: Database, sett
         url=url,
     )
     if prepared is None:
+        await _return_to_start_menu(message, user_id)
         return
     platform, item_id, normalized_url, snapshot = prepared
     flow.pending_track[user_id] = PendingTrackDraft(
@@ -116,6 +125,7 @@ async def cmd_track(message: Message, command: CommandObject, db: Database, sett
         item_id=item_id,
         url=normalized_url,
         name=snapshot.name,
+        api_price=snapshot.price,
         price=snapshot.price,
     )
     flow.awaiting_threshold.add(user_id)
@@ -173,11 +183,11 @@ async def cmd_setthreshold(message: Message, command: CommandObject, db: Databas
 
     track_id = tracks[number - 1].id
     current_price = tracks[number - 1].api_price
-    if not is_valid_threshold_price(threshold, current_price):
+    max_threshold = max_threshold_from_api_price(current_price)
+    if not is_valid_threshold_price(threshold, current_price) or threshold > max_threshold:
         await message.answer(
-            "Пороговая цена должна быть ниже текущей.\n"
-            f"Текущая цена: ≈ {format_price(current_price)}\n"
-            "Пожалуйста, введите корректную цену."
+            f"Минимальная пороговая цена: ≤ {format_price(max_threshold)}\n"
+            "Пожалуйста, введите корректную пороговую цену."
         )
         return
     updated = await db.set_threshold(user_id, track_id, threshold)
@@ -315,10 +325,17 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
             await message.answer("Введите корректную пороговую цену, например: 70.70")
             return
 
-        if not is_valid_threshold_price(threshold_price, pending.price):
+        if not is_valid_threshold_price(threshold_price, pending.api_price):
+            max_threshold = max_threshold_from_api_price(pending.api_price)
             await message.answer(
-                "Пороговая цена должна быть ниже текущей.\n"
-                f"Текущая цена: ≈ {format_price(pending.price)} {currency_code_by_url(pending.url)}\n"
+                f"Минимальная пороговая цена: ≤ {format_price(max_threshold)} {currency_code_by_url(pending.url)}\n"
+                "Пожалуйста, введите корректную пороговую цену."
+            )
+            return
+        max_threshold = max_threshold_from_api_price(pending.api_price)
+        if threshold_price > max_threshold:
+            await message.answer(
+                f"Минимальная пороговая цена: ≤ {format_price(max_threshold)} {currency_code_by_url(pending.url)}\n"
                 "Пожалуйста, введите корректную пороговую цену."
             )
             return
@@ -333,8 +350,9 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
             snapshot=ProductSnapshot(
                 item_id=pending.item_id,
                 name=pending.name,
-                price=pending.price,
+                price=pending.api_price,
             ),
+            manual_price=pending.price,
             threshold_price=threshold_price,
         )
         flow.awaiting_threshold.discard(user_id)
@@ -354,6 +372,7 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
     url, _ = extract_url_and_threshold(text)
     if url is None:
         await message.answer("Не удалось найти ссылку в сообщении. Пришлите URL товара.")
+        await _return_to_start_menu(message, user_id)
         return
 
     prepared = await prepare_tracking(
@@ -364,7 +383,7 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
         expected_platform=flow.selected_platform.get(user_id),
     )
     if prepared is None:
-        flow.awaiting_link.add(user_id)
+        await _return_to_start_menu(message, user_id)
         return
     platform, item_id, normalized_url, snapshot = prepared
     flow.pending_track[user_id] = PendingTrackDraft(
@@ -372,6 +391,7 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
         item_id=item_id,
         url=normalized_url,
         name=snapshot.name,
+        api_price=snapshot.price,
         price=snapshot.price,
     )
     flow.awaiting_price_input.discard(user_id)
@@ -435,7 +455,7 @@ async def price_edit_callback(callback: CallbackQuery) -> None:
         return
     flow.awaiting_threshold.discard(user_id)
     flow.awaiting_price_input.add(user_id)
-    await message.answer("Введите актуальную текущую цену, например: 70.70")
+    await message.answer("Введите актуальную текущую цену")
     await callback.answer()
 
 

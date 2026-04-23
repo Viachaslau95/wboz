@@ -99,6 +99,7 @@ class Database:
         item_id: str,
         url: str,
         title: str,
+        api_price: Decimal,
         manual_price: Decimal,
         threshold_price: Decimal,
     ) -> int:
@@ -111,7 +112,8 @@ class Database:
                     item_id=item_id,
                     url=url,
                     title=title,
-                    api_price=manual_price,
+                    api_price=api_price,
+                    api_baseline_price=api_price,
                     manual_price=manual_price,
                     threshold_price=threshold_price,
                 )
