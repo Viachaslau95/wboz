@@ -47,13 +47,13 @@ def build_notification(
 
 
 def build_drop5_notification(
-    name: str, initial_price: Decimal, current: Decimal, url: str
+    name: str, api_baseline_price: Decimal, current: Decimal, url: str
 ) -> tuple[str, InlineKeyboardMarkup]:
     safe = html.escape(name)
     text = (
-        f"📉 Сильное снижение (≥{float(DROP_ALERT_MIN_FRACTION) * 100:.0f}% от начальной цены)\n\n"
+        f"📉 Сильное снижение (≥{float(DROP_ALERT_MIN_FRACTION) * 100:.0f}% от API-базы)\n\n"
         f"🛍 {safe}\n"
-        f"Начальная ≈ {format_price(initial_price)} → сейчас ≈ {format_price(current)}\n"
+        f"API-база ≈ {format_price(api_baseline_price)} → сейчас ≈ {format_price(current)}\n"
         f"🛒 {url}"
     )
     return text, _item_url_keyboard(url)
@@ -132,17 +132,19 @@ async def _check_one_tracked_item(
         return
 
     now = datetime.datetime.now(datetime.UTC)
-    last_stored: Decimal = item.last_price
+    last_stored: Decimal = item.api_price
     current: Decimal = snapshot.price
-    thr: Decimal = item.threshold
+    should_set_api_baseline = item.api_baseline_price is None
+    api_baseline = item.api_baseline_price or current
+    thr: Decimal = item.threshold_price
     is_below, delta = is_price_below_threshold(last_stored, current, thr)
     cool_h = settings.THRESHOLD_ALERT_COOLDOWN_HOURS
 
     if not is_below:
-        if is_five_percent_drop_from_baseline(item.initial_price, current) and should_send_threshold_alert(
+        if is_five_percent_drop_from_baseline(api_baseline, current) and should_send_threshold_alert(
             item.last_drop5_notified_at, now, cool_h
         ):
-            t5, k5 = build_drop5_notification(snapshot.name, item.initial_price, current, item.url)
+            t5, k5 = build_drop5_notification(snapshot.name, api_baseline, current, item.url)
             await bot.send_message(
                 chat_id=item.user_id,
                 text=t5,
@@ -169,6 +171,7 @@ async def _check_one_tracked_item(
             snapshot.name,
             price_above_threshold=True,
             sent_threshold_alert=False,
+            set_api_baseline_price_if_missing=should_set_api_baseline,
         )
         return
 
@@ -194,6 +197,7 @@ async def _check_one_tracked_item(
             snapshot.name,
             price_above_threshold=False,
             sent_threshold_alert=True,
+            set_api_baseline_price_if_missing=should_set_api_baseline,
         )
     else:
         await db.apply_poll_result(
@@ -202,6 +206,7 @@ async def _check_one_tracked_item(
             snapshot.name,
             price_above_threshold=False,
             sent_threshold_alert=False,
+            set_api_baseline_price_if_missing=should_set_api_baseline,
         )
 
 

@@ -172,7 +172,7 @@ async def cmd_setthreshold(message: Message, command: CommandObject, db: Databas
         return
 
     track_id = tracks[number - 1].id
-    current_price = tracks[number - 1].last_price
+    current_price = tracks[number - 1].api_price
     if not is_valid_threshold_price(threshold, current_price):
         await message.answer(
             "Пороговая цена должна быть ниже текущей.\n"
@@ -300,7 +300,7 @@ async def handle_link_after_platform_choice(message: Message, db: Database, sett
         flow.awaiting_threshold.add(user_id)
         await message.answer(
             f"Принял текущую цену: ≈ {format_price(entered_price)} {currency_code_by_url(pending.url)}.\n"
-            "Теперь пришлите пороговую цену (она должна быть ниже текущей), например: 70.70"
+            "Теперь пришлите приемлемую цену от которой хотите совершить покупку"
         )
         return
 
@@ -417,7 +417,7 @@ async def price_ok_callback(callback: CallbackQuery) -> None:
     current_price = pending.price
     await message.answer(
         f"Отлично. Текущая цена: ≈ {format_price(current_price)} {currency_code_by_url(pending.url)}.\n"
-        "Теперь пришлите пороговую цену (она должна быть ниже текущей), например: 70.70"
+        "Теперь пришлите приемлемую цену от которой хотите совершить покупку"
     )
     await callback.answer()
 

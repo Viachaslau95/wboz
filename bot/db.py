@@ -25,9 +25,9 @@ def _select_due_tracks() -> Select[Any]:
             t.item_id,
             t.url,
             t.title,
-            t.last_price,
-            t.initial_price,
-            t.threshold,
+            t.api_price,
+            t.api_baseline_price,
+            t.threshold_price,
             t.last_checked_at,
             t.last_threshold_notified_at,
             t.last_drop5_notified_at,
@@ -62,9 +62,9 @@ def _due_item_from_row(row: Row) -> DueTrackItem:
         item_id=row.item_id,
         url=row.url,
         title=row.title,
-        last_price=row.last_price,
-        initial_price=row.initial_price,
-        threshold=row.threshold,
+        api_price=row.api_price,
+        api_baseline_price=row.api_baseline_price,
+        threshold_price=row.threshold_price,
         check_interval=int(row.check_interval),
         last_threshold_notified_at=row.last_threshold_notified_at,
         last_drop5_notified_at=row.last_drop5_notified_at,
@@ -99,8 +99,8 @@ class Database:
         item_id: str,
         url: str,
         title: str,
-        current_price: Decimal,
-        threshold: Decimal,
+        manual_price: Decimal,
+        threshold_price: Decimal,
     ) -> int:
         async with transaction() as session:
             q = (
@@ -111,9 +111,9 @@ class Database:
                     item_id=item_id,
                     url=url,
                     title=title,
-                    last_price=current_price,
-                    initial_price=current_price,
-                    threshold=threshold,
+                    api_price=manual_price,
+                    manual_price=manual_price,
+                    threshold_price=threshold_price,
                 )
                 .returning(TrackedItems.id)
             )
@@ -129,8 +129,10 @@ class Database:
                     TrackedItems.item_id,
                     TrackedItems.url,
                     TrackedItems.title,
-                    TrackedItems.last_price,
-                    TrackedItems.threshold,
+                    TrackedItems.api_price,
+                    TrackedItems.manual_price,
+                    TrackedItems.api_baseline_price,
+                    TrackedItems.threshold_price,
                     TrackedItems.created_at,
                 )
                 .where(TrackedItems.user_id == user_id, TrackedItems.is_active.is_(True))
@@ -154,7 +156,7 @@ class Database:
             result = await session.execute(q)
             return len(result.scalars().all())
 
-    async def set_threshold(self, user_id: int, track_id: int, threshold: Decimal) -> int:
+    async def set_threshold(self, user_id: int, track_id: int, threshold_price: Decimal) -> int:
         async with transaction() as session:
             q = (
                 update(TrackedItems)
@@ -164,7 +166,7 @@ class Database:
                     TrackedItems.is_active.is_(True),
                 )
                 .values(
-                    threshold=threshold,
+                    threshold_price=threshold_price,
                     last_threshold_notified_at=None,
                     last_drop5_notified_at=None,
                     last_approach_notified_at=None,
@@ -225,19 +227,22 @@ class Database:
     async def apply_poll_result(
         self,
         track_id: int,
-        current_price: Decimal,
+        api_price: Decimal,
         title: str | None,
         *,
         price_above_threshold: bool,
         sent_threshold_alert: bool,
+        set_api_baseline_price_if_missing: bool = False,
     ) -> None:
         now = datetime.datetime.now(datetime.UTC)
         values: dict = {
-            "last_price": current_price,
+            "api_price": api_price,
             "last_checked_at": now,
         }
         if title:
             values["title"] = title
+        if set_api_baseline_price_if_missing:
+            values["api_baseline_price"] = api_price
         if price_above_threshold:
             values["last_threshold_notified_at"] = None
         elif sent_threshold_alert:

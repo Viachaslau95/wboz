@@ -51,7 +51,9 @@ def resolve_tracks_request_user(
 
 
 async def fetch_product_snapshot(
-    platform: str, item_id: str, url: str,
+    platform: str,
+    item_id: str,
+    url: str,
 ) -> tuple[ProductSnapshot | None, bool]:
     """
     Fetches a snapshot. Second value is True when the failure was a timeout/transport error
@@ -127,17 +129,17 @@ async def save_tracking_with_snapshot(
     snapshot: ProductSnapshot,
     threshold_price: Decimal,
 ) -> bool:
-    track_id = await db.add_tracking(
+    await db.add_tracking(
         user_id=user_id,
         platform=platform,
         item_id=item_id,
         url=normalized_url,
         title=snapshot.name,
-        current_price=snapshot.price,
-        threshold=threshold_price,
+        manual_price=snapshot.price,
+        threshold_price=threshold_price,
     )
     await message.answer(
-        f"Отслеживание добавлено #{track_id}.\n"
+        f"Отслеживание добавлено\n"
         f"Товар: {snapshot.name}\n"
         f"Текущая цена: ≈ {format_price(snapshot.price)} {currency_code_by_url(normalized_url)}\n"
         f"Пороговая цена: ≤ {format_price(threshold_price)} {currency_code_by_url(normalized_url)}\n",

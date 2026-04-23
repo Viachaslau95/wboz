@@ -19,9 +19,9 @@ class DueTrackItem(BaseModel):
     item_id: str
     url: str
     title: str | None
-    last_price: Decimal
-    initial_price: Decimal
-    threshold: Decimal
+    api_price: Decimal
+    api_baseline_price: Decimal | None = None
+    threshold_price: Decimal
     check_interval: int
     last_threshold_notified_at: datetime.datetime | None = None
     last_drop5_notified_at: datetime.datetime | None = None
@@ -38,8 +38,10 @@ class UserTrackListItem(BaseModel):
     item_id: str
     url: str
     title: str | None
-    last_price: Decimal
-    threshold: Decimal
+    api_price: Decimal
+    manual_price: Decimal
+    api_baseline_price: Decimal | None = None
+    threshold_price: Decimal
     created_at: datetime.datetime
 
 

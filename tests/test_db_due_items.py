@@ -7,7 +7,7 @@ def test_due_tracks_query_selects_required_columns() -> None:
     query = _select_due_tracks()
     selected_keys = set(query.selected_columns.keys())
     assert "last_checked_at" in selected_keys
-    assert "initial_price" in selected_keys
+    assert "api_baseline_price" in selected_keys
     assert "last_drop5_notified_at" in selected_keys
     assert "last_approach_notified_at" in selected_keys
 

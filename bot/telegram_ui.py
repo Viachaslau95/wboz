@@ -5,7 +5,12 @@ from __future__ import annotations
 import html
 from urllib.parse import urlparse
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from bot.formatting import format_price
 from bot.schemas import UserTrackListItem
@@ -43,12 +48,15 @@ def format_track_line(idx: int, item: UserTrackListItem) -> str:
     currency = currency_code_by_url(item.url)
     title = html.escape(item.title or item.item_id)
     url = html.escape(item.url, quote=True)
+    shown_current_price = item.api_price
+    if item.api_baseline_price is not None and item.api_price == item.api_baseline_price:
+        shown_current_price = item.manual_price
     return (
         f"<b>{idx}. {item.platform.upper()}</b>\n"
         f"Название: {title}\n"
         f'Ссылка: <a href="{url}">Открыть товар</a>\n'
-        f"Текущая цена: ≈ {format_price(item.last_price)} {currency}\n"
-        f"Пороговая цена: ≤ {format_price(item.threshold)} {currency}"
+        f"Текущая цена: ≈ {format_price(shown_current_price)} {currency}\n"
+        f"Пороговая цена: ≤ {format_price(item.threshold_price)} {currency}"
     )
 
 
