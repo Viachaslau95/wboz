@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wboz.fullname" . }}-bot
+  labels:
+    {{- include "wboz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bot
+spec:
+  replicas: {{ .Values.replicaCount.bot }}
+  selector:
+    matchLabels:
+      {{- include "wboz.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: bot
+  template:
+    metadata:
+      labels:
+        {{- include "wboz.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bot
+    spec:
+      containers:
+        - name: bot
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["poetry", "run", "python", "-m", "app", "bot"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "wboz.fullname" . }}-config
+            - secretRef:
+                name: {{ include "wboz.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.resources.bot | nindent 12 }}

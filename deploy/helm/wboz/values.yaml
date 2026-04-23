@@ -1,0 +1,53 @@
+replicaCount:
+  api: 1
+  bot: 1
+
+image:
+  repository: ghcr.io/your-org/wboz
+  tag: latest
+  pullPolicy: IfNotPresent
+
+app:
+  environment: production
+  debug: false
+  serviceName: wboz
+  apiPort: 8080
+  requestsTimeout: 10
+  defaultThreshold: 10
+  defaultCheckInterval: 30
+  thresholdAlertCooldownHours: 24
+  databasePoolSize: 10
+  databasePoolMaxOverflow: 0
+  databasePoolTimeout: 30
+
+secrets:
+  botToken: ""
+  postgresPassword: ""
+
+postgres:
+  image: postgres:16-alpine
+  db: wboz
+  user: wboz
+  storageSize: 10Gi
+  storageClassName: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: ""
+  host: api.example.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: wboz-tls
+  annotations: {}
+
+resources:
+  api: {}
+  bot: {}
+  postgres: {}
+  migrator: {}

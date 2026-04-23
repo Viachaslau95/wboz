@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wboz.postgresServiceName" . }}
+  labels:
+    {{- include "wboz.labels" . | nindent 4 }}
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  selector:
+    {{- include "wboz.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres

@@ -1,0 +1,28 @@
+image:
+  repository: ghcr.io/your-org/wboz
+  tag: latest
+
+app:
+  environment: production
+  defaultThreshold: 10
+  defaultCheckInterval: 30
+  thresholdAlertCooldownHours: 24
+
+secrets:
+  botToken: "replace-with-real-token"
+  postgresPassword: "replace-with-strong-password"
+
+postgres:
+  db: wboz
+  user: wboz
+  storageSize: 10Gi
+
+ingress:
+  enabled: true
+  className: traefik
+  host: api.example.com
+  tls:
+    enabled: true
+    secretName: wboz-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod

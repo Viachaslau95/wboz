@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction --no-root
+
+      - name: Ruff
+        run: poetry run ruff check .
+
+      - name: Black
+        run: poetry run black --check .
+
+      - name: Isort
+        run: poetry run isort --check-only .
+
+      - name: Pytest
+        run: poetry run pytest
+
+      - name: Docker build smoke check
+        run: docker build -t wboz:ci .
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm lint
+        run: helm lint deploy/helm/wboz
+
+      - name: Helm template smoke check
+        run: |
+          helm template wboz deploy/helm/wboz \
+            -f deploy/helm/values-prod.example.yaml \
+            --set secrets.botToken=dummy \
+            --set secrets.postgresPassword=dummy >/dev/null
