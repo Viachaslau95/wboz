@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,4 +57,11 @@ class TrackedItems(Base):
     __table_args__ = (
         Index("idx_tracked_items_active", "is_active", "last_checked_at"),
         Index("idx_tracked_items_user", "user_id", "is_active"),
+        Index(
+            "uq_tracked_items_user_item_active",
+            "user_id",
+            "item_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
     )

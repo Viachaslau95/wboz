@@ -54,6 +54,7 @@ class PendingTrackDraft(BaseModel):
     item_id: str
     url: str
     name: str
+    api_price: Decimal
     price: Decimal
 
 

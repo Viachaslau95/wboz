@@ -105,7 +105,10 @@ async def prepare_tracking(
 
     active_tracks = await db.list_user_tracks(user_id)
     if len(active_tracks) >= 5:
-        await message.answer("Лимит бесплатной версии: максимум 5 товаров на отслеживании.")
+        await message.answer("Лимит: максимум 5 товаров на отслеживании.")
+        return None
+    if any(t.item_id == item_id and t.platform == platform for t in active_tracks):
+        await message.answer("Этот товар уже есть в отслеживании.")
         return None
 
     snapshot, transport_failed = await fetch_product_snapshot(platform, item_id, normalized_url)
@@ -127,6 +130,7 @@ async def save_tracking_with_snapshot(
     item_id: str,
     normalized_url: str,
     snapshot: ProductSnapshot,
+    manual_price: Decimal,
     threshold_price: Decimal,
 ) -> bool:
     await db.add_tracking(
@@ -135,13 +139,14 @@ async def save_tracking_with_snapshot(
         item_id=item_id,
         url=normalized_url,
         title=snapshot.name,
-        manual_price=snapshot.price,
+        api_price=snapshot.price,
+        manual_price=manual_price,
         threshold_price=threshold_price,
     )
     await message.answer(
         f"Отслеживание добавлено\n"
         f"Товар: {snapshot.name}\n"
-        f"Текущая цена: ≈ {format_price(snapshot.price)} {currency_code_by_url(normalized_url)}\n"
+        f"Текущая цена: ≈ {format_price(manual_price)} {currency_code_by_url(normalized_url)}\n"
         f"Пороговая цена: ≤ {format_price(threshold_price)} {currency_code_by_url(normalized_url)}\n",
         parse_mode="HTML",
     )
@@ -185,3 +190,4 @@ async def send_user_tracks_for_user(
             parse_mode="HTML",
             disable_web_page_preview=True,
         )
+    await message.answer("Нажмите «WB»:", reply_markup=main_inline_keyboard())

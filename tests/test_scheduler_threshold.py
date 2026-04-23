@@ -34,10 +34,10 @@ def test_should_send_threshold_alert_first_time() -> None:
 
 
 def test_build_approach_notification_no_raw_lt_for_telegram_html() -> None:
-    """parse_mode=HTML: «<5%» ломает разбор — в тексте должны быть &lt; / &gt;."""
+    """parse_mode=HTML: «<2%» ломает разбор — в тексте должны быть &lt; / &gt;."""
     text, _ = build_approach_notification("Товар", Decimal("50.00"), Decimal("55.00"), "https://example.com/p")
-    assert "<5%" not in text
-    assert "&lt;5%" in text
+    assert "<2%" not in text
+    assert "&lt;2%" in text
     assert "&gt; порога" in text
 
 
